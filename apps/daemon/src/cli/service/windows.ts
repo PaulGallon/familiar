@@ -52,11 +52,19 @@ export function renderLauncher({
   workDir = dirname(cliPath),
   node = process.execPath,
 }: ServiceOptions) {
-  return `const { openSync, writeSync } = require('node:fs');
+  return `const { existsSync, openSync, writeSync } = require('node:fs');
 const { spawn } = require('node:child_process');
+const { join } = require('node:path');
 process.env.FAMILIAR_DATA_DIR = ${JSON.stringify(dataDir)};
 process.env.FAMILIAR_HOST = '127.0.0.1';
 process.env.PATH = ${JSON.stringify(`${win32.dirname(node)};`)} + (process.env.PATH || '');
+// Startup processes can inherit a PATH from before Docker Desktop was installed.
+// Keep explicit PATH entries first, then check Docker Desktop's standard locations.
+const dockerDirs = [
+  process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'Programs', 'DockerDesktop', 'resources', 'bin'),
+  process.env.ProgramFiles && join(process.env.ProgramFiles, 'Docker', 'Docker', 'resources', 'bin'),
+].filter((dir) => dir && existsSync(join(dir, 'docker.exe')));
+process.env.PATH += dockerDirs.length ? ';' + dockerDirs.join(';') : '';
 const log = openSync(${JSON.stringify(resolve(dataDir, 'service.log'))}, 'a', 0o600);
 const child = spawn(${JSON.stringify(node)}, [${JSON.stringify(cliPath)}, 'serve'], {
   cwd: ${JSON.stringify(workDir)}, env: process.env, stdio: ['ignore', log, log], windowsHide: true,

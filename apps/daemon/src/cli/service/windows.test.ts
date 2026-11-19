@@ -8,7 +8,8 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { powershell, powershellString } from './powershell.ts'
 import {
@@ -190,6 +191,70 @@ test('uninstall leaves the database and login behind', () => {
   expect(task).toBeNull()
   expect(readFileSync(database, 'utf8')).toBe('conversation fixture')
 })
+
+test.each(['user', 'system', 'missing'])(
+  'the launcher discovers %s Docker with a stale inherited PATH',
+  (installation) => {
+    const env = {
+      PATH: 'existing-bin',
+      LOCALAPPDATA: resolve(temporary, 'Local AppData'),
+      ProgramFiles: resolve(temporary, 'Program Files'),
+    }
+    const userBin = join(
+      env.LOCALAPPDATA,
+      'Programs',
+      'DockerDesktop',
+      'resources',
+      'bin',
+    )
+    const systemBin = join(
+      env.ProgramFiles,
+      'Docker',
+      'Docker',
+      'resources',
+      'bin',
+    )
+    const installed = installation === 'user' ? userBin : systemBin
+    const spawn = vi.fn(() => ({ on: vi.fn() }))
+    runInNewContext(
+      renderLauncher({
+        dataDir: temporary,
+        cliPath: resolve(temporary, 'familiar.js'),
+        node: 'C:\\Node\\node.exe',
+      }),
+      {
+        process: { env },
+        require: (name: string) => {
+          if (name === 'node:fs') {
+            return {
+              existsSync: (file: string) =>
+                installation !== 'missing' &&
+                file === join(installed, 'docker.exe'),
+              openSync: () => 1,
+              writeSync: vi.fn(),
+            }
+          }
+          if (name === 'node:path') {
+            return { join }
+          }
+          if (name === 'node:child_process') {
+            return { spawn }
+          }
+          throw new Error(`Unexpected module: ${name}`)
+        },
+      },
+    )
+    expect(env.PATH).toBe(
+      'C:\\Node;existing-bin' +
+        (installation === 'missing' ? '' : ';' + installed),
+    )
+    expect(spawn).toHaveBeenCalledWith(
+      'C:\\Node\\node.exe',
+      [resolve(temporary, 'familiar.js'), 'serve'],
+      expect.objectContaining({ env }),
+    )
+  },
+)
 
 test('the Windows launcher forwards logs and the daemon exit code', async () => {
   const native =
